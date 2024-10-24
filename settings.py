@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     
     # Database settings
     user_db_url: str
+    books_db_url: str
     
     # JWT settings
     secret_key: str 
@@ -24,5 +25,8 @@ class Settings(BaseSettings):
     
     # SuperUser key
     superuser_key: int
+    
+    # Authentication endpoint
+    endpoint: str
     
 settings = Settings()

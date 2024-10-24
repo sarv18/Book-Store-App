@@ -173,3 +173,56 @@ def verify_registered_user(request: Request, token: str, db: Session = Depends(g
     except Exception as e:
         logger.error(f"Unexpected error during email verification: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.get("/user/{token}", status_code= 200, include_in_schema= False)
+def auth_user(token: str, db: Session = Depends(get_db)):
+    '''
+    Description: Decodes the JWT token and fetches the authenticated user's data from the database.
+    Parameters: 
+    token: JWT token containing the user ID.
+    db: Database session.
+    Return: A JSON response with the user's data if the token is valid.
+    '''
+    try:
+        # Decode the JWT token to get payload
+        payload = jwt.decode(token, settings.secret_key, algorithms=[settings.algorithm])
+
+        user_id: int = payload.get("user_id")
+        
+        if user_id is None:
+            logger.warning("Invalid user ID in token")
+            raise HTTPException(status_code=401, detail="Invalid User ID")
+        
+        # Fetch user details from the database based on user_id from token
+        db_user = db.query(User).filter(User.id == user_id).first()
+        
+        if not db_user:
+            logger.warning(f"User not found for ID: {user_id}")
+            raise HTTPException(status_code=404, detail= "User not found")
+        
+        logger.info(f"User authenticated: {db_user.email}")
+        # Return user details in JSON format
+        return {
+            "message": "Authorizaton successful",
+            "status": "success",
+            "data": db_user.to_dict
+        }
+        
+    except jwt.ExpiredSignatureError:
+        logger.error("Token expired")
+        raise HTTPException(status_code=401, detail="Token has expired")
+
+    except jwt.InvalidTokenError:
+        logger.error("Invalid token")
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    except SQLAlchemyError as e:
+        logger.error(f"Database error during user authentication: {str(e)}")
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+    except Exception as e:
+        logger.error(f"Unexpected error during user authentication: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+ 
