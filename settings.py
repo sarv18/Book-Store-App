@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     # Database settings
     user_db_url: str
     books_db_url: str
+    carts_db_url: str
     
     # JWT settings
     secret_key: str 
@@ -28,5 +29,8 @@ class Settings(BaseSettings):
     
     # Authentication endpoint
     endpoint: str
+    
+    # Book Services url
+    book_services_url: str
     
 settings = Settings()

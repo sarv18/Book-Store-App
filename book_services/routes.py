@@ -176,3 +176,34 @@ def delete_book(request: Request, book_id: int, db: Session = Depends(get_db)):
     except Exception as e:
         logger.error(f"Unexpected error during book deletion: {str(e)}")
         raise HTTPException(status_code=500, detail="Unexpected error occurred")
+
+
+# GET Book by ID
+@app.get("/books/{book_id}", status_code=200, include_in_schema= False)
+def get_book(book_id: int, db: Session = Depends(get_db)):
+    """
+    Retrieve data for a specific book by its ID.
+    Parameters:
+    book_id: The ID of the book to retrieve.
+    db: The database session to interact with the database.
+    Returns:
+    dict: A success message and book details if found, or a 404 error if not found.
+    """
+    try:
+        # Query for the book with the given ID
+        book = db.query(Book).filter(Book.id == book_id).first()
+        
+        # If the book is not found, raise a 404 error
+        if not book:
+            raise HTTPException(status_code=404, detail= f"Book not found for ID {book_id}")
+
+        # Return the book data
+        return {
+            "message": "Book retrieved successfully",
+            "status": "success",
+            "data": book
+        }
+
+    except Exception as e:
+        logger.error(f"Unexpected error during book retrieval: {str(e)}")
+        raise HTTPException(status_code=500, detail="Unexpected error occurred")
