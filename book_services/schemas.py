@@ -11,4 +11,9 @@ class CreateBookSchema(BaseModel):
     description: str
     price: int
     stock: int
-    
+
+class AdjustStockRequest(BaseModel):
+    """
+    This schema is used to adjust stock according to new requests.
+    """
+    quantity: int

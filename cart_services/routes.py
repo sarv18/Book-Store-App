@@ -1,7 +1,7 @@
 from fastapi import FastAPI, Depends, HTTPException, Security, Request
 from sqlalchemy.orm import Session
 from .models import Cart, CartItem, get_db
-from .schemas import CreateCartItemSchema, ResponseCartSchema
+from .schemas import CreateCartItemSchema
 from .utils import auth_user
 from settings import settings, logger
 from fastapi.security import APIKeyHeader
@@ -20,7 +20,7 @@ def create_or_update_cart_item(request: Request, body: CreateCartItemSchema, db:
     body: A `CreateCartItemSchema` schema instance containing the cart item details.
     db: The database session to interact with the database.
     Returns:
-    ResponseCartSchema: A schema instance containing cart details after the item is added.
+    dict: A dictionary containing a success message and the newly created cart details.
     """
     try:
         user_data = request.state.user
@@ -102,7 +102,7 @@ def get_cart(request: Request, db: Session = Depends(get_db)):
     Parameters:
     db: The database session to interact with the database.
     Returns:
-    ResponseCartSchema: A schema instance containing cart details.
+    dict: A dictionary containing a success message and retrieved cart details.
     """
     try:
         user_data = request.state.user
@@ -177,3 +177,161 @@ def delete_cart_item(request: Request, item_id: int, db: Session = Depends(get_d
     except Exception as e:
         logger.error(f"Unexpected error during cart item deletion: {str(e)}")
         raise HTTPException(status_code=500, detail="Unexpected error occurred")
+
+
+# Place the order
+@app.patch("/cart/place-order", status_code=201)
+def place_order(request: Request, db: Session = Depends(get_db)):
+    """
+    Create an order from the user's cart, validate stock availability, and update stock quantities.
+    Parameters:
+    db: The database session to interact with the database.
+    Return:
+    dict: A dictionary containing a success message.
+    """
+    try:
+        user_data = request.state.user
+        user_id = user_data["id"]
+
+        # Checking the actice cart is present or not having is_order == False 
+        cart = db.query(Cart).filter(Cart.user_id == user_id, Cart.is_ordered == False).first()
+        if not cart or not cart.items:
+            raise HTTPException(status_code=404, detail="Cart is empty or already ordered.")
+
+        for item in cart.items:
+            book_service_url = f"{settings.book_services_url}{item.book_id}"
+            response = http.get(book_service_url, headers={"Authorization": request.headers.get("Authorization")})
+
+            if response.status_code != 200:
+                logger.info(f"Book with ID {item.book_id} not found in book service.")
+                raise HTTPException(status_code= 400, detail=f"Book with ID {item.book_id} not found.")
+
+            book_data = response.json()
+            book_stock = book_data["data"].get("stock")
+
+            # Cheking the order quantity is higher than the stock
+            if item.quantity > book_stock:
+                logger.warning(f"Insufficient stock for book ID {item.book_id}. Requested: {item.quantity}, Available: {book_stock}")
+                raise HTTPException(status_code= 406, detail=f"Insufficient stock for book ID {item.book_id}")  
+
+        # Updating the book stock in BOOK DB
+        for item in cart.items:
+            book_service_url = f"{settings.book_services_url}{item.book_id}"
+            http.patch(book_service_url, json={"quantity": item.quantity}, headers={"Authorization": request.headers.get("Authorization")})
+
+        # Commiting the database as true
+        cart.is_ordered = True
+        db.commit()
+        logger.info(f"Order created successfully for user ID {user_id}")
+
+        return {
+            "message": "Order placed successfully",
+            "status": "success",
+            "data": cart.to_dict
+        }
+
+    except HTTPException as error:
+        logger.error(f"Order creation error: {str(error.detail)}")
+        raise error
+
+    except Exception as error:
+        logger.error(f"Unexpected error during order creation: {str(error)}")
+        raise HTTPException(status_code= 500, detail="Unexpected error occurred")
+
+
+# Get the all placed order
+@app.get("/cart/order-details", status_code=200)
+def get_order_details(request: Request, db: Session = Depends(get_db)):
+    """
+    Retrieve the order details for the logged-in user.
+    Parameters:
+    db: The database session to interact with the database.
+    Return:
+    dict: A dictionary containing a success message and the newly created book details.
+    """
+    try:
+        # Retrieve the authenticated user's ID
+        user_data = request.state.user
+        user_id = user_data["id"]
+
+        # Query the ordered cart for the user
+        cart = db.query(Cart).filter(Cart.user_id == user_id, Cart.is_ordered == True).first()
+        if not cart:
+            raise HTTPException(status_code=404, detail="No order found for the user.")
+
+        # Retrieve items in the cart with book details from book_services
+        ordered_items = []
+        for item in cart.items:
+            book_service_url = f"{settings.book_services_url}{item.book_id}"
+            response = http.get(book_service_url, headers={"Authorization": request.headers.get("Authorization")})
+
+            if response.status_code != 200:
+                logger.error(f"Failed to retrieve book data for book ID {item.book_id}")
+                raise HTTPException(status_code=500, detail=f"Failed to retrieve book details for book ID {item.book_id}")
+
+            book_data = response.json()["data"]
+
+            # Append book details and order quantity to the ordered items list
+            ordered_items.append({
+                "book_id": item.book_id,
+                "book_title": book_data["description"],
+                "quantity": item.quantity,
+                "price": book_data["price"],
+                "total_cost": item.quantity * book_data["price"] 
+            })
+
+        logger.info(f"Order details retrieved for user ID {user_id}")
+
+        # Return order details response
+        return {
+            "message": "Order details fetched successfully",
+            "status": "success",
+            "data": {
+            "order_id": cart.id,
+            "user_id": user_id,
+            "ordered_items": ordered_items,
+            "order_status": "Completed",
+            "total_amount": sum(item["total_cost"] for item in ordered_items)
+            }
+        }
+
+    except HTTPException as error:
+        logger.error(f"Error fetching order details: {str(error.detail)}")
+        raise error
+    except Exception as error:
+        logger.error(f"Unexpected error while fetching order details: {str(error)}")
+        raise HTTPException(status_code= 500, detail="Unexpected error occurred")
+
+
+# Delete the cart, if order is not placed
+@app.delete("/all-cart-delete/", status_code=200)
+def delete_cart(request: Request, db: Session = Depends(get_db)):
+    """
+    Delete the entire cart and restore the stock of each item in the book database.
+    """
+    try:
+        user_data = request.state.user
+        user_id = user_data["id"]
+
+        # Retrieve the user's active cart
+        cart = db.query(Cart).filter(Cart.user_id == user_id, Cart.is_ordered == False).first()
+        if not cart or not cart.items:
+            raise HTTPException(status_code=404, detail="Cart not found or empty")
+
+        # Delete the cart after stock adjustment
+        db.delete(cart)
+        db.commit()
+        logger.info(f"Cart and items deleted for user: {user_data['email']}.")
+
+        return {
+            "message": "Cart deleted and stock restored successfully",
+            "status": "success"
+        }
+
+    except HTTPException as error:
+        logger.error(f"Error during cart deletion: {str(error.detail)}")
+        raise error
+    except Exception as error:
+        logger.error(f"Unexpected error during cart deletion: {str(error)}")
+        raise HTTPException(status_code=500, detail="Unexpected error occurred")
+    
