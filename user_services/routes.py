@@ -1,5 +1,5 @@
 import jwt
-from fastapi import FastAPI, Depends, HTTPException, Request, Query
+from fastapi import FastAPI, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 from .models import User, get_db
 from .schemas import UserRegistrationSchema, UserLoginSchema 

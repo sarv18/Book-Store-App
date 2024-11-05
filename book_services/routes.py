@@ -87,6 +87,9 @@ def get_books(request: Request, db: Session = Depends(get_db)):
             "status": "success",
             "data": books_data
         }
+    # Re-raise known HTTP exceptions like 404
+    except HTTPException as http_exc:
+        raise http_exc
         
     except Exception as e:
         logger.error(f"Unexpected error during books retrieval: {str(e)}")
@@ -203,7 +206,10 @@ def get_book(book_id: int, db: Session = Depends(get_db)):
             "status": "success",
             "data": book
         }
-
+    # Re-raise known HTTP exceptions like 404
+    except HTTPException as http_exc:
+        raise http_exc
+    
     except Exception as e:
         logger.error(f"Unexpected error during book retrieval: {str(e)}")
         raise HTTPException(status_code=500, detail="Unexpected error occurred")
